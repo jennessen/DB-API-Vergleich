@@ -15,18 +15,15 @@ import pandas as pd
 
 from config_loader import load_config, AppSettings, Profile
 from logging_setup import setup_logging
-from api_client import ApiClient, ApiConfig
-from db_client import DbClient, SqlConfig
+from api_client import ApiConfig
+from db_client import SqlConfig
 from join_export import join_and_export
 from preview import TreePreview
-from time_utils import make_iso_range
+from core import ComparisonCore
+# time_utils now used in core
+# from time_utils import make_iso_range
 from sanitization import redact
 
-# Optional: JS-Validator (py-mini-racer)
-try:
-    from validator import JsValidator
-except Exception:
-    JsValidator = None
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +82,9 @@ class App(tk.Tk):
         self._last_df_db: Optional[pd.DataFrame] = None
         self._last_df_api: Optional[pd.DataFrame] = None
         self._last_df_merged: Optional[pd.DataFrame] = None
+
+        # Core (logic)
+        self.core = ComparisonCore(self.config_obj.export_dir)
 
         # UI
         self._build_ui()
@@ -462,9 +462,6 @@ class App(tk.Tk):
         if not script_path:
             messagebox.showwarning("Prüfung", "Kein Validator-Skript angegeben.")
             return
-        if JsValidator is None:
-            messagebox.showwarning("Prüfung", "Validator nicht verfügbar (py-mini-racer fehlt).")
-            return
 
         # UI kurz in „laufend“-Zustand versetzen
         self.btn_revalidate.configure(state=tk.DISABLED)
@@ -487,18 +484,16 @@ class App(tk.Tk):
             # Thread-safe das Fenster öffnen
             self.after(0, self._open_validator_window)
 
-            validator = JsValidator(self.ent_validator.get().strip())
+            merged_validated, ok = self.core.validate_if_possible(base, self.ent_validator.get().strip(), progress_q=self._progress_q)
+            if not ok:
+                raise RuntimeError("Validator nicht verfügbar (py-mini-racer fehlt).")
 
-            merged_validated, _ = validator.run(
-                base,
-                progress_q=self._progress_q,
-                fix_dir=os.path.join(self.config_obj.export_dir, "validator_fixes"),
-            )
-
-            # Ergebnis übernehmen und Vorschau aktualisieren
-            self._last_df_merged = merged_validated
-            self.preview.show_dataframe(merged_validated)
-            self._progress_q.put("Erneute Prüfung abgeschlossen – Vorschau aktualisiert.")
+            # Ergebnis übernehmen und Vorschau aktualisieren (in Main-Thread)
+            def _apply_reval_ui():
+                self._last_df_merged = merged_validated
+                self.preview.show_dataframe(merged_validated)
+                self._progress_q.put("Erneute Prüfung abgeschlossen – Vorschau aktualisiert.")
+            self.after(0, _apply_reval_ui)
 
         except Exception as ex:
             msg = redact(str(ex))
@@ -506,10 +501,12 @@ class App(tk.Tk):
             self.after(0, lambda: self._show_error("Prüfung fehlgeschlagen", msg))
 
         finally:
-            # UI zurücksetzen (Export weiter allowed)
-            self.pb.stop()
-            self.lbl_status.config(text="Bereit.")
-            self.btn_revalidate.configure(state=tk.NORMAL)
+            # UI zurücksetzen (Export weiter allowed) — im Main-Thread
+            def _reset_reval_ui():
+                self.pb.stop()
+                self.lbl_status.config(text="Bereit.")
+                self.btn_revalidate.configure(state=tk.NORMAL)
+            self.after(0, _reset_reval_ui)
 
     # --------------------------------------------------------------------- #
     # Worker (führt den gesamten Lauf aus – ohne Export)
@@ -549,32 +546,19 @@ class App(tk.Tk):
             to_iso = ""
             if api_cfg.use_updates:
                 try:
-                    from_date_str = self.ent_from_date.get().strip()
-                    to_date_str = self.ent_to_date.get().strip()
-
-                    # Falls Platzhalter stehen gelassen wurden → heutigen Tag 00:00–23:59:59
-                    if from_date_str.lower().startswith("yyyy") or to_date_str.lower().startswith("yyyy"):
-                        import datetime as _dt
-                        today = _dt.date.today()
-                        from_iso, to_iso = make_iso_range(
-                            today, "00:00:00", today, "23:59:59", profile.timezone
-                        )
-                    else:
-                        fdate = pd.to_datetime(from_date_str).date()
-                        tdate = pd.to_datetime(to_date_str).date()
-                        from_iso, to_iso = make_iso_range(
-                            fdate,
-                            self.ent_from_time.get().strip(),
-                            tdate,
-                            self.ent_to_time.get().strip(),
-                            profile.timezone,
-                        )
+                    from_iso, to_iso = self.core.build_time_range(
+                        self.ent_from_date.get().strip(),
+                        self.ent_from_time.get().strip(),
+                        self.ent_to_date.get().strip(),
+                        self.ent_to_time.get().strip(),
+                        profile.timezone,
+                    )
                 except Exception as ex:
                     raise ValueError(f"Ungültiger Zeitraum/Zeiteinstellungen: {ex}")
 
             # --- DB lesen ---
             self._progress_q.put("Lese DB …")
-            df_db = DbClient().read_select(
+            df_db = self.core.read_db(
                 sql_cfg,
                 cancel=self._cancel_event,
                 progress=self._progress_q,
@@ -584,8 +568,7 @@ class App(tk.Tk):
 
             # --- API lesen ---
             self._progress_q.put("Rufe API auf …")
-            api = ApiClient()
-            df_api = api.get_dataframe(
+            df_api = self.core.read_api(
                 api_cfg,
                 from_iso,
                 to_iso,
@@ -597,7 +580,7 @@ class App(tk.Tk):
 
             # --- Join (ohne Export) ---
             self._progress_q.put("Join …")
-            merged_only = self._perform_join_only(
+            merged_only = self.core.perform_join_only(
                 df_db=df_db,
                 df_api=df_api,
                 db_key=self.ent_dbkey.get().strip(),
@@ -610,44 +593,37 @@ class App(tk.Tk):
             # --- Optional: Validierung ---
             merged = merged_only
             if self.var_validate.get() and self.ent_validator.get().strip():
-                if JsValidator is None:
-                    self._progress_q.put("Validator nicht verfügbar: py-mini-racer nicht installiert")
-                else:
-                    try:
-                        self._progress_q.put("Validator initialisieren …")
-                        # Thread-safe Fenster öffnen
-                        self.after(0, self._open_validator_window)
+                try:
+                    self._progress_q.put("Validator initialisieren …")
+                    # Thread-safe Fenster öffnen
+                    self.after(0, self._open_validator_window)
 
-                        script_path = self.ent_validator.get().strip()
-                        self._progress_q.put(f"Validator: {script_path}")
+                    script_path = self.ent_validator.get().strip()
+                    self._progress_q.put(f"Validator: {script_path}")
 
-                        validator = JsValidator(script_path)
-
-                        self._progress_q.put("Validiere Zeilen …")
-                        merged_validated, _ = validator.run(
-                            merged_only,
-                            progress_q=self._progress_q,
-                            fix_dir=os.path.join(self.config_obj.export_dir, "validator_fixes"),
-                        )
+                    merged_validated, ok = self.core.validate_if_possible(merged_only, script_path, progress_q=self._progress_q)
+                    if ok:
                         merged = merged_validated
-                    except Exception as ex:
-                        self._progress_q.put(f"Validator-Fehler: {ex}")
+                    else:
+                        self._progress_q.put("Validator nicht verfügbar: py-mini-racer nicht installiert")
+                except Exception as ex:
+                    self._progress_q.put(f"Validator-Fehler: {ex}")
 
             if self._cancel_event.is_set():
                 return
 
-            # Vorschau aktualisieren
-            self.preview.show_dataframe(merged)
-            self._progress_q.put("Join abgeschlossen – Vorschau aktualisiert.")
-
-            # Ergebnisse für manuellen Export merken
-            self._last_df_db = df_db
-            self._last_df_api = df_api
-            self._last_df_merged = merged
-
-            # Export- und Revalidate-Button freigeben
-            self.btn_export.configure(state=tk.NORMAL)
-            self.btn_revalidate.configure(state=tk.NORMAL)
+            # Vorschau und Buttons im Main-Thread aktualisieren
+            def _apply_post_run_ui():
+                self.preview.show_dataframe(merged)
+                self._progress_q.put("Join abgeschlossen – Vorschau aktualisiert.")
+                # Ergebnisse für manuellen Export merken
+                self._last_df_db = df_db
+                self._last_df_api = df_api
+                self._last_df_merged = merged
+                # Export- und Revalidate-Button freigeben
+                self.btn_export.configure(state=tk.NORMAL)
+                self.btn_revalidate.configure(state=tk.NORMAL)
+            self.after(0, _apply_post_run_ui)
 
         except Exception as ex:
             msg = redact(str(ex))
@@ -656,52 +632,11 @@ class App(tk.Tk):
             self.after(0, lambda: self._show_error("Fehler", msg))
 
         finally:
-            self._set_running(False)
+            self.after(0, lambda: self._set_running(False))
 
     # --------------------------------------------------------------------- #
-    # Join-only Helper
+    # (removed) Join-only helper is now in core.perform_join_only
     # --------------------------------------------------------------------- #
-
-    @staticmethod
-    def _perform_join_only(
-        df_db: pd.DataFrame,
-        df_api: pd.DataFrame,
-        db_key: str,
-        api_key: str,
-        how: str,
-        pre_db: str,
-        pre_api: str,
-    ) -> pd.DataFrame:
-        """Erzeugt den gejointen DataFrame (ohne Export), inklusive Prefixing und Key-Pflege."""
-
-        def _safe_str_strip(series: pd.Series) -> pd.Series:
-            try:
-                return series.astype("string").str.strip()
-            except Exception:
-                return series
-
-        df1 = df_db.copy()
-        df2 = df_api.copy()
-
-        if db_key not in df1.columns:
-            raise KeyError(f"DB-Key '{db_key}' nicht gefunden.")
-        if api_key not in df2.columns:
-            raise KeyError(f"API-Key '{api_key}' nicht gefunden.")
-
-        df1[db_key] = _safe_str_strip(df1[db_key])
-        df2[api_key] = _safe_str_strip(df2[api_key])
-
-        df1 = df1.add_prefix(pre_db)
-        df2 = df2.add_prefix(pre_api)
-
-        merged = pd.merge(
-            df1,
-            df2,
-            left_on=pre_db + db_key,
-            right_on=pre_api + api_key,
-            how=how,
-        )
-        return merged
 
     # --------------------------------------------------------------------- #
     # Progress/Log
