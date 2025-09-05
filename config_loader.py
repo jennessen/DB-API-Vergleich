@@ -117,8 +117,33 @@ def load_config(path: str) -> AppSettings:
     if not os.path.exists(path):
         return AppSettings()
 
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
+    # robust gegenüber UTF-8 BOM und optionalen Kommentaren (//, /* */) in der JSON-Datei
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            text = f.read()
+    except Exception:
+        # Fallback falls Encoding-Probleme
+        with open(path, "rb") as f:
+            data = f.read()
+        try:
+            text = data.decode("utf-8-sig")
+        except Exception:
+            text = data.decode("utf-8", errors="ignore")
+
+    # Entferne simple JS-Kommentare, falls vorhanden
+    def _strip_comments(s: str) -> str:
+        import re
+        # Entferne // bis Zeilenende (nicht in Strings) – grob ausreichend für Config
+        s = re.sub(r"(^|\s)//.*?$", "", s, flags=re.MULTILINE)
+        # Entferne /* ... */ Blockkommentare
+        s = re.sub(r"/\*.*?\*/", "", s, flags=re.DOTALL)
+        return s
+
+    try:
+        raw = json.loads(_strip_comments(text))
+    except json.JSONDecodeError:
+        # Letzter Versuch ohne Kommentar-Strip
+        raw = json.loads(text)
 
     api_urls = raw.get("api_urls", {})
     profiles: Dict[str, Profile] = {}
