@@ -1,0 +1,15 @@
+# Core
+pandas
+pyodbc
+requests
+urllib3
+
+# Excel
+xlsxwriter
+openpyxl>=3.1.0
+
+# Timezones
+pytz
+
+# JS-Engine für Zeilen-Validator
+py-mini-racer
