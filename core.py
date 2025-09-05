@@ -65,13 +65,12 @@ class ComparisonCore:
             how=how,
         )
         return merged
-
     def validate_if_possible(self, merged_df: pd.DataFrame, script_path: str, progress_q=None) -> Tuple[pd.DataFrame, bool]:
         """Optionally run the JS validator.
 
         Returns (df_out, ok_flag). If py-mini-racer or validator is unavailable or script_path is empty,
         returns the input DataFrame and ok_flag=False. If validator runs, returns validated DF and ok_flag=True.
-        Any exception raised by JsValidator (e.g., unreadable script) is propagated to caller.
+        Any exception raised by JsValidator (except missing file) is propagated to caller.
         """
         try:
             from validator import JsValidator  # optional
@@ -79,7 +78,16 @@ class ComparisonCore:
             return merged_df, False
         if not script_path:
             return merged_df, False
-        validator = JsValidator(script_path)
+        try:
+            validator = JsValidator(script_path)
+        except FileNotFoundError:
+            # Freundliche Meldung ins Progress-Log, kein Crash
+            if progress_q is not None:
+                progress_q.put(f"[JS] Validator-Skript nicht gefunden: {script_path}")
+            return merged_df, False
+        except Exception:
+            # Andere Fehler (z.B. Syntaxfehler im JS) → weiterhin hochreichen
+            raise
         merged_validated, _ = validator.run(
             merged_df,
             progress_q=progress_q,

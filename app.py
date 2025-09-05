@@ -481,11 +481,12 @@ class App(tk.Tk):
                 base = base.drop(columns=drop_cols, errors="ignore")
 
             self._progress_q.put("Erneute Prüfung: starte Validator …")
-            # Thread-safe das Fenster öffnen
-            self.after(0, self._open_validator_window)
 
             merged_validated, ok = self.core.validate_if_possible(base, self.ent_validator.get().strip(), progress_q=self._progress_q)
-            if not ok:
+            if ok:
+                # Fenster nur öffnen, wenn der Validator wirklich aktiv ist
+                self.after(0, self._open_validator_window)
+            else:
                 raise RuntimeError("Validator nicht verfügbar (py-mini-racer fehlt).")
 
             # Ergebnis übernehmen und Vorschau aktualisieren (in Main-Thread)
@@ -595,14 +596,16 @@ class App(tk.Tk):
             if self.var_validate.get() and self.ent_validator.get().strip():
                 try:
                     self._progress_q.put("Validator initialisieren …")
-                    # Thread-safe Fenster öffnen
-                    self.after(0, self._open_validator_window)
 
                     script_path = self.ent_validator.get().strip()
                     self._progress_q.put(f"Validator: {script_path}")
 
-                    merged_validated, ok = self.core.validate_if_possible(merged_only, script_path, progress_q=self._progress_q)
+                    merged_validated, ok = self.core.validate_if_possible(
+                        merged_only, script_path, progress_q=self._progress_q
+                    )
                     if ok:
+                        # Fenster nur öffnen, wenn der Validator wirklich aktiv ist
+                        self.after(0, self._open_validator_window)
                         merged = merged_validated
                     else:
                         self._progress_q.put("Validator nicht verfügbar: py-mini-racer nicht installiert")
