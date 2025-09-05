@@ -44,6 +44,7 @@ class JoinProfile:
     db_prefix: str = "db_"
     api_prefix: str = "api_"
     validator_script: str = ""   # Pfad zu rules.js (optional)
+    validator_code: str = ""     # Inline JS-Code (bevorzugt)
     validate_on_run: bool = False
 
 
@@ -188,6 +189,7 @@ def load_config(path: str) -> AppSettings:
                 db_prefix=join.get("db_prefix", "db_"),
                 api_prefix=join.get("api_prefix", "api_"),
                 validator_script=join.get("validator_script", ""),
+                validator_code=join.get("validator_code", ""),
                 validate_on_run=join.get("validate_on_run", False),
             ),
             timezone=node.get("timezone", "Europe/Berlin"),
@@ -238,6 +240,7 @@ def save_config(path: str, settings: AppSettings) -> None:
                 "db_prefix": prof.join.db_prefix,
                 "api_prefix": prof.join.api_prefix,
                 "validator_script": getattr(prof.join, "validator_script", ""),
+                "validator_code": getattr(prof.join, "validator_code", ""),
                 "validate_on_run": getattr(prof.join, "validate_on_run", False),
             },
         }

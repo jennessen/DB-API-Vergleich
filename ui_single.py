@@ -247,7 +247,7 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         # Deine existierende Preview-Komponente
         self.preview = TreePreview(prev)
         self.preview.frame.grid(row=1, column=0, sticky="nsew")
-        
+
         # Suchfeld in Vorschau neben Rows/Seite (nachdem Preview existiert)
         self.ent_search = ttk.Entry(pbar, width=26)
         self.ent_search.insert(0, "Suchen (alle Spalten)…")
@@ -273,11 +273,38 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         self.ent_search.bind("<FocusOut>", _on_search_focus_out)
         self.ent_search.bind("<KeyRelease>", _on_search_key)
 
+        # Untere Zeile: Editor (links) + Logs (rechts)
+        bottom = ttk.Frame(parent)
+        bottom.grid(row=1, column=0, sticky="nsew", padx=6, pady=(8, 0))
+        bottom.columnconfigure(0, weight=2)
+        bottom.columnconfigure(1, weight=1)
+        bottom.rowconfigure(0, weight=1)
+
+        # Editor
+        ed_frame = ttk.Labelframe(bottom, text="Validator-Script (JS)")
+        ed_frame.grid(row=0, column=0, sticky="nsew", padx=(0,6))
+        ed_frame.columnconfigure(0, weight=1); ed_frame.rowconfigure(0, weight=1)
+        self.txt_validator = ScrolledText(ed_frame, height=10, undo=True)
+        try:
+            import tkinter.font as tkfont
+            self.txt_validator.configure(font=tkfont.Font(family="Consolas", size=10))
+        except Exception:
+            pass
+        self.txt_validator.grid(row=0, column=0, sticky="nsew")
+        self._setup_js_highlighting(self.txt_validator)
+        # Wenn Profil bereits geladen wurde, Code anzeigen
+        try:
+            prof = self._current_profile()
+            if prof and getattr(prof.join, 'validator_code', ''):
+                self.txt_validator.insert("1.0", prof.join.validator_code)
+        except Exception:
+            pass
+
         # Logs
-        logs = self._card(parent, "Logs")
-        logs.grid(row=1, column=0, sticky="nsew", padx=6, pady=(8, 0))
+        logs = ttk.Labelframe(bottom, text="Logs")
+        logs.grid(row=0, column=1, sticky="nsew")
         logs.columnconfigure(0, weight=1); logs.rowconfigure(0, weight=1)
-        self.txt_log = ScrolledText(logs, height=8, state=tk.NORMAL)
+        self.txt_log = ScrolledText(logs, height=10, state=tk.NORMAL)
         self.txt_log.grid(row=0, column=0, sticky="nsew")
 
     # ------------------------------------------------------------------ #
@@ -302,6 +329,44 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         if values: combo.current(0)
         combo.grid(row=row, column=1, sticky="ew", padx=6, pady=4)
         return combo
+
+    # --- Simple JS Syntax Highlighting ---
+    def _setup_js_highlighting(self, text: ScrolledText) -> None:
+        # Define tags
+        text.tag_configure('kw', foreground='#0070c0')
+        text.tag_configure('str', foreground='#a31515')
+        text.tag_configure('com', foreground='#6a9955')
+        text.tag_configure('num', foreground='#098658')
+        # Bind event
+        def _rehighlight(_evt=None):
+            try:
+                import re
+                s = text.get('1.0', tk.END)
+                # Clear tags
+                text.tag_remove('kw', '1.0', tk.END)
+                text.tag_remove('str', '1.0', tk.END)
+                text.tag_remove('com', '1.0', tk.END)
+                text.tag_remove('num', '1.0', tk.END)
+                # Comments
+                for m in re.finditer(r"//.*?$", s, flags=re.MULTILINE):
+                    start = f"1.0+{m.start()}c"; end = f"1.0+{m.end()}c"; text.tag_add('com', start, end)
+                for m in re.finditer(r"/\*.*?\*/", s, flags=re.DOTALL):
+                    start = f"1.0+{m.start()}c"; end = f"1.0+{m.end()}c"; text.tag_add('com', start, end)
+                # Strings
+                for m in re.finditer(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`", s):
+                    start = f"1.0+{m.start()}c"; end = f"1.0+{m.end()}c"; text.tag_add('str', start, end)
+                # Numbers
+                for m in re.finditer(r"\b\d+(?:\.\d+)?\b", s):
+                    start = f"1.0+{m.start()}c"; end = f"1.0+{m.end()}c"; text.tag_add('num', start, end)
+                # Keywords
+                kw = r"\b(?:function|return|if|else|switch|case|break|for|while|do|var|let|const|true|false|null|undefined|try|catch|finally|throw|new|in|of)\b"
+                for m in re.finditer(kw, s):
+                    start = f"1.0+{m.start()}c"; end = f"1.0+{m.end()}c"; text.tag_add('kw', start, end)
+            except Exception:
+                pass
+        text.bind('<KeyRelease>', _rehighlight)
+        # Initial pass
+        self.after(10, _rehighlight)
 
     def _browse_validator(self) -> None:
         path = filedialog.askopenfilename(
@@ -349,6 +414,7 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         prof.join.db_prefix = self.ent_dbpref.get() or "db_"
         prof.join.api_prefix = self.ent_apipref.get() or "api_"
         prof.join.validator_script = self.ent_validator.get()
+        prof.join.validator_code = self.txt_validator.get("1.0", tk.END).strip()
         prof.join.validate_on_run = bool(self.var_validate.get())
         # Sonstiges
         prof.timezone = self.get_profile_timezone()
@@ -475,6 +541,7 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
     def get_join_db_prefix(self) -> str: return self.ent_dbpref.get()
     def get_join_api_prefix(self) -> str: return self.ent_apipref.get()
     def get_validator_script_path(self) -> str: return self.ent_validator.get()
+    def get_validator_script_code(self) -> str: return self.txt_validator.get("1.0", tk.END)
     def get_validate_on_run(self) -> bool: return bool(self.var_validate.get())
 
     # Sonstiges aus Profil
@@ -535,6 +602,12 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         self.ent_dbpref.delete(0, tk.END); self.ent_dbpref.insert(0, prof.join.db_prefix)
         self.ent_apipref.delete(0, tk.END); self.ent_apipref.insert(0, prof.join.api_prefix)
         self.ent_validator.delete(0, tk.END); self.ent_validator.insert(0, getattr(prof.join, "validator_script", "") or "")
+        # Editor-Inhalt übernehmen
+        try:
+            self.txt_validator.delete("1.0", tk.END)
+            self.txt_validator.insert("1.0", getattr(prof.join, "validator_code", "") or "")
+        except Exception:
+            pass
         self.var_validate.set(bool(getattr(prof.join, "validate_on_run", False)))
 
     # ------------------------------------------------------------------ #

@@ -48,9 +48,11 @@ class JsValidator:
       - Python liest die Logs zyklisch aus und schreibt sie (prefixed) in die Progress-Queue
     """
 
-    def __init__(self, script_path: str) -> None:
-        self.path = Path(script_path)
-        if not self.path.exists():
+    def __init__(self, script_path: str | None = None, script_code: str | None = None) -> None:
+        if not script_code and not script_path:
+            raise ValueError("Es muss entweder script_code oder script_path angegeben werden.")
+        self.path = Path(script_path) if script_path else None
+        if self.path is not None and not self.path.exists():
             raise FileNotFoundError(f"Validator-Skript nicht gefunden: {self.path}")
 
         # JS-Kontext
@@ -82,7 +84,7 @@ class JsValidator:
         )
 
         # Skript laden
-        code = self.path.read_text(encoding="utf-8")
+        code = script_code if script_code is not None else self.path.read_text(encoding="utf-8")
         self.ctx.eval(code)
 
         # validate() vorhanden?

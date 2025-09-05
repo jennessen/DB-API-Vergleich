@@ -92,8 +92,9 @@ class AppController:
             self.ui.show_error("Prüfung", "Es liegen noch keine Daten vor.")
             return
         script = self.inputs.get_validator_script_path().strip()
-        if not script:
-            self.ui.show_error("Prüfung", "Kein Validator-Skript angegeben.")
+        code_inline = (getattr(self.inputs, 'get_validator_script_code', lambda: '')() or '').strip()
+        if not script and not code_inline:
+            self.ui.show_error("Prüfung", "Kein Validator-Skript/Code angegeben.")
             return
         if JsValidator is None:
             self.ui.show_error("Prüfung", "Validator nicht verfügbar (py-mini-racer fehlt).")
@@ -150,7 +151,9 @@ class AppController:
                 pre_api=self.inputs.get_join_api_prefix().strip() or "api_",
             )
 
-            if self.inputs.get_validate_on_run() and self.inputs.get_validator_script_path().strip():
+            if self.inputs.get_validate_on_run() and (
+                self.inputs.get_validator_script_path().strip() or (getattr(self.inputs, 'get_validator_script_code', lambda: '')() or '').strip()
+            ):
                 df_merged = self._run_validator(df_merged)
 
             if self._cancel.is_set(): return
@@ -186,14 +189,20 @@ class AppController:
 
     # -------- helpers --------
     def _run_validator(self, df_in: pd.DataFrame) -> pd.DataFrame:
+        code = (getattr(self.inputs, 'get_validator_script_code', lambda: '')() or '').strip()
         script_path = self.inputs.get_validator_script_path().strip()
-        if not script_path: return df_in
+        if not code and not script_path:
+            return df_in
         if JsValidator is None:
             self._progress_q.put("Validator nicht verfügbar: py-mini-racer nicht installiert")
             return df_in
         self.ui.open_validator_window()
-        self._progress_q.put(f"Validator: {script_path}")
-        validator = JsValidator(script_path)
+        if code:
+            self._progress_q.put("Validator: Inline-Code aus Config")
+            validator = JsValidator(script_code=code)
+        else:
+            self._progress_q.put(f"Validator: {script_path}")
+            validator = JsValidator(script_path)
         validated, _ = validator.run(
             df_in,
             progress_q=self._progress_q,
