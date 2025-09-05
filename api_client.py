@@ -26,6 +26,8 @@ class ApiConfig:
     page_cap: int = 100
     timeout_s: int = 60
     select: str = ""  # optionales OData $select
+    expand: str = ""  # optionales OData $expand
+    filter: str = ""  # optionales OData $filter
 
 
 # ============================================================================
@@ -84,6 +86,15 @@ class ApiClient:
         if cfg.select:
             select_clean = cfg.select.replace(" ", "")
             params.append(f"$select={self._q(select_clean, safe='$._,()=/')}")
+
+        if cfg.expand:
+            # Für $expand entfernen wir nur Leerzeichen um Kommas/Operatoren, Struktur bleibt erhalten
+            expand_compact = ",".join([p.strip() for p in cfg.expand.split(",")])
+            params.append(f"$expand={self._q(expand_compact, safe='$._,()=/')}")
+
+        if cfg.filter:
+            # $filter darf Leerzeichen enthalten; wichtige OData-Zeichen sollen unescaped bleiben
+            params.append("$filter=" + self._q(cfg.filter, safe="$._,()=/'\"+-:"))
 
         if params:
             url = f"{url}?{'&'.join(params)}"

@@ -180,8 +180,10 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         self.ent_alias = self._labeled_entry(api, "Alias", 3)
         self.ent_auth = self._labeled_entry(api, "Auth (Bearer/FFN …)", 4)
         self.ent_select = self._labeled_entry(api, "OData $select (optional)", 5)
+        self.ent_expand = self._labeled_entry(api, "OData $expand (optional)", 6)
+        self.ent_filter = self._labeled_entry(api, "OData $filter (optional)", 7)
 
-        row = 6
+        row = 8
         ttk.Label(api, text="From").grid(row=row, column=0, sticky=tk.W, padx=6, pady=4)
         self.ent_from_date = ttk.Entry(api, width=12); self.ent_from_date.insert(0, "YYYY-MM-DD")
         self.ent_from_date.grid(row=row, column=1, sticky=tk.W)
@@ -354,6 +356,8 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
     def get_api_auth(self) -> str: return self.ent_auth.get()
     def get_api_use_updates(self) -> bool: return bool(self.var_updates.get())
     def get_api_select(self) -> str: return self.ent_select.get()
+    def get_api_expand(self) -> str: return self.ent_expand.get()
+    def get_api_filter(self) -> str: return self.ent_filter.get()
     def get_api_from_date(self) -> str: return self.ent_from_date.get()
     def get_api_from_time(self) -> str: return self.ent_from_time.get()
     def get_api_to_date(self) -> str: return self.ent_to_date.get()
@@ -412,6 +416,11 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         self.ent_alias.delete(0, tk.END); self.ent_alias.insert(0, prof.api.alias)
         self.ent_auth.delete(0, tk.END); self.ent_auth.insert(0, prof.api.auth)
         self.ent_select.delete(0, tk.END); self.ent_select.insert(0, getattr(prof.api, "select", "") or "")
+        # Neue OData-Parameter
+        if hasattr(self, 'ent_expand'):
+            self.ent_expand.delete(0, tk.END); self.ent_expand.insert(0, getattr(prof.api, "expand", "") or "")
+        if hasattr(self, 'ent_filter'):
+            self.ent_filter.delete(0, tk.END); self.ent_filter.insert(0, getattr(prof.api, "filter", "") or "")
 
         # Join
         self.ent_dbkey.delete(0, tk.END); self.ent_dbkey.insert(0, prof.join.db_key)

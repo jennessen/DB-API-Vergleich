@@ -124,6 +124,8 @@ class AppController:
                 page_cap=self.inputs.get_profile_page_cap(),
                 timeout_s=self.inputs.get_profile_api_timeout(),
                 select=(self.inputs.get_api_select() or "").strip(),
+                expand=(getattr(self.inputs, 'get_api_expand', lambda: "")() or "").strip(),
+                filter=(getattr(self.inputs, 'get_api_filter', lambda: "")() or "").strip(),
             )
 
             from_iso, to_iso = self._resolve_iso_range(api_cfg.use_updates)

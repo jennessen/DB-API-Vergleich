@@ -155,31 +155,33 @@ class App(tk.Tk):
         self.ent_alias = self._labeled_entry(self.api_tab, "Alias", row=3)
         self.ent_auth = self._labeled_entry(self.api_tab, "Auth (Bearer/FFN …)", row=4)
         self.ent_select = self._labeled_entry(self.api_tab, "OData $select (optional)", row=5)
+        self.ent_expand = self._labeled_entry(self.api_tab, "OData $expand (optional)", row=6)
+        self.ent_filter = self._labeled_entry(self.api_tab, "OData $filter (optional)", row=7)
 
-        ttk.Label(self.api_tab, text="From").grid(row=6, column=0, sticky=tk.W, padx=6, pady=4)
+        ttk.Label(self.api_tab, text="From").grid(row=8, column=0, sticky=tk.W, padx=6, pady=4)
         self.ent_from_date = ttk.Entry(self.api_tab, width=12)
         self.ent_from_date.insert(0, "YYYY-MM-DD")
-        self.ent_from_date.grid(row=6, column=1, sticky=tk.W)
+        self.ent_from_date.grid(row=8, column=1, sticky=tk.W)
 
         self.ent_from_time = ttk.Entry(self.api_tab, width=10)
         self.ent_from_time.insert(0, "00:00:00")
-        self.ent_from_time.grid(row=6, column=2, sticky=tk.W, padx=4)
+        self.ent_from_time.grid(row=8, column=2, sticky=tk.W, padx=4)
 
-        ttk.Label(self.api_tab, text="To").grid(row=7, column=0, sticky=tk.W, padx=6, pady=4)
+        ttk.Label(self.api_tab, text="To").grid(row=9, column=0, sticky=tk.W, padx=6, pady=4)
         self.ent_to_date = ttk.Entry(self.api_tab, width=12)
         self.ent_to_date.insert(0, "YYYY-MM-DD")
-        self.ent_to_date.grid(row=7, column=1, sticky=tk.W)
+        self.ent_to_date.grid(row=9, column=1, sticky=tk.W)
 
         self.ent_to_time = ttk.Entry(self.api_tab, width=10)
         self.ent_to_time.insert(0, "23:59:59")
-        self.ent_to_time.grid(row=7, column=2, sticky=tk.W, padx=4)
+        self.ent_to_time.grid(row=9, column=2, sticky=tk.W, padx=4)
 
         self.var_updates = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             self.api_tab,
             text="Updates-Endpunkt verwenden",
             variable=self.var_updates,
-        ).grid(row=8, column=0, columnspan=3, sticky=tk.W, padx=6)
+        ).grid(row=10, column=0, columnspan=3, sticky=tk.W, padx=6)
 
         # --- Join Tab ---
         self.join_tab = ttk.Frame(nb)
@@ -355,6 +357,13 @@ class App(tk.Tk):
 
         self.ent_select.delete(0, tk.END)
         self.ent_select.insert(0, getattr(prof.api, "select", "") or "")
+        # Neue OData Felder
+        if hasattr(self, "ent_expand"):
+            self.ent_expand.delete(0, tk.END)
+            self.ent_expand.insert(0, getattr(prof.api, "expand", "") or "")
+        if hasattr(self, "ent_filter"):
+            self.ent_filter.delete(0, tk.END)
+            self.ent_filter.insert(0, getattr(prof.api, "filter", "") or "")
 
         self.var_updates.set(bool(getattr(prof.api, "use_updates", False)))
 
@@ -540,6 +549,8 @@ class App(tk.Tk):
                 page_cap=profile.api.page_cap,
                 timeout_s=profile.api.timeout_s,
                 select=(self.ent_select.get() or "").strip(),
+                expand=(getattr(self, 'ent_expand', None).get() if hasattr(self, 'ent_expand') else "").strip(),
+                filter=(getattr(self, 'ent_filter', None).get() if hasattr(self, 'ent_filter') else "").strip(),
             )
 
             # Zeitfenster nur relevant, wenn Updates aktiv sind

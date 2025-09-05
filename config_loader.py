@@ -32,6 +32,8 @@ class ApiProfile:
     page_cap: int = 100
     timeout_s: int = 60
     select: str = ""          # optionales OData $select (String)
+    expand: str = ""          # optionales OData $expand (String)
+    filter: str = ""          # optionales OData $filter (String)
 
 
 @dataclass
@@ -96,7 +98,9 @@ def load_config(path: str) -> AppSettings:
           "use_updates": false,
           "page_cap": 100,
           "timeout_s": 60,
-          "select": "id,createdAt,status" // String (optional)
+          "select": "id,createdAt,status", // String (optional)
+          "expand": "lines($select=id,quantity)", // String (optional)
+          "filter": "status eq 'Open'"        // String (optional)
         },
         "join": {
           "db_key": "KundenNr",
@@ -149,6 +153,8 @@ def load_config(path: str) -> AppSettings:
                 page_cap=api.get("page_cap", 100),
                 timeout_s=api.get("timeout_s", 60),
                 select=api.get("select", ""),
+                expand=api.get("expand", ""),
+                filter=api.get("filter", ""),
             ),
             join=JoinProfile(
                 db_key=join.get("db_key", "id"),
