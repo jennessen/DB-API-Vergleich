@@ -13,7 +13,7 @@ from tkinter.scrolledtext import ScrolledText
 
 import pandas as pd
 
-from config_loader import load_config, AppSettings, Profile
+from config_loader import load_config, save_config, upsert_profile, AppSettings, Profile
 from logging_setup import setup_logging
 from api_client import ApiConfig
 from db_client import SqlConfig
@@ -64,10 +64,10 @@ class App(tk.Tk):
 
         # Pfade (PyInstaller-kompatibel)
         app_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-        cfg_path = os.path.join(app_dir, "config.json")
+        self._cfg_path = os.path.join(app_dir, "config.json")
 
         # Config + Logging
-        self.config_obj: AppSettings = load_config(cfg_path)
+        self.config_obj: AppSettings = load_config(self._cfg_path)
         setup_logging(self.config_obj.logging_dir)
         log.info("App started", extra={"version": self.config_obj.app_version})
 
@@ -232,6 +232,12 @@ class App(tk.Tk):
         self.btn_export = ttk.Button(bar, text="Exportieren", command=self.on_export, state=tk.DISABLED)
         self.btn_export.pack(side=tk.LEFT, padx=6)
 
+        # Config: Speichern / Neu
+        self.btn_save = ttk.Button(bar, text="Speichern", command=self._on_save_profile)
+        self.btn_save.pack(side=tk.LEFT, padx=6)
+        self.btn_new = ttk.Button(bar, text="Neues Profil", command=self._on_new_profile)
+        self.btn_new.pack(side=tk.LEFT, padx=6)
+
         self.lbl_status = ttk.Label(bar, text="Bereit.")
         self.lbl_status.pack(side=tk.LEFT, padx=10)
 
@@ -310,6 +316,10 @@ class App(tk.Tk):
     # --------------------------------------------------------------------- #
     # Profile → UI Defaults
     # --------------------------------------------------------------------- #
+
+    def _get_current_profile(self) -> Optional[Profile]:
+        name = self.cmb_profile.get() or next(iter(self.config_obj.profiles), "")
+        return self.config_obj.profiles.get(name)
 
     def _apply_profile_defaults(self) -> None:
         """Übernimmt aus dem ausgewählten Profil die Defaults in die UI."""
@@ -686,6 +696,84 @@ class App(tk.Tk):
         self.txt_log.insert(tk.END, text + "\n")
         self.txt_log.see(tk.END)
         self.txt_log.config(state=tk.DISABLED)
+
+    # --------------------------- Config Save/Create --------------------------- #
+    def _profile_from_inputs(self) -> Profile:
+        prof = Profile()
+        # DB
+        prof.db.server = self.ent_server.get()
+        prof.db.database = self.ent_database.get()
+        prof.db.user = self.ent_user.get()
+        prof.db.password = self.ent_pwd.get()
+        prof.db.sql = self.txt_sql.get("1.0", tk.END).strip()
+        # API
+        prof.api.base_key = self.cmb_base.get()
+        prof.api.role = self.cmb_role.get()
+        prof.api.resource = self.ent_resource.get()
+        prof.api.alias = self.ent_alias.get()
+        prof.api.auth = self.ent_auth.get()
+        prof.api.use_updates = bool(self.var_updates.get())
+        # page_cap/timeout currently not separate inputs on this UI; keep existing values if present
+        cur = self._get_current_profile()
+        prof.api.page_cap = cur.api.page_cap if cur else 100
+        prof.api.timeout_s = cur.api.timeout_s if cur else 60
+        prof.api.select = self.ent_select.get()
+        prof.api.expand = self.ent_expand.get()
+        prof.api.filter = self.ent_filter.get()
+        # JOIN
+        prof.join.db_key = self.ent_dbkey.get()
+        prof.join.api_key = self.ent_apikey.get()
+        prof.join.how = self.cmb_how.get() or "inner"
+        prof.join.db_prefix = self.ent_dbpref.get() or "db_"
+        prof.join.api_prefix = self.ent_apipref.get() or "api_"
+        prof.join.validator_script = self.ent_validator.get()
+        prof.join.validate_on_run = bool(self.var_validate.get())
+        # Sonstiges
+        prof.timezone = cur.timezone if cur else "Europe/Berlin"
+        return prof
+
+    def _on_save_profile(self) -> None:
+        name = self.cmb_profile.get()
+        if not name:
+            messagebox.showwarning("Kein Profil", "Bitte zuerst ein Profil auswählen oder neu anlegen.")
+            return
+        prof = self._profile_from_inputs()
+        upsert_profile(self.config_obj, name, prof)
+        try:
+            save_config(self._cfg_path, self.config_obj)
+            self.lbl_status.config(text=f"Profil '{name}' gespeichert.")
+        except Exception as e:
+            self._show_error("Speichern fehlgeschlagen", str(e))
+
+    def _on_new_profile(self) -> None:
+        win = Toplevel(self)
+        win.title("Neues Profil anlegen")
+        ttk.Label(win, text="Profilname:").grid(row=0, column=0, padx=8, pady=8)
+        ent = ttk.Entry(win, width=28); ent.grid(row=0, column=1, padx=8, pady=8)
+        ent.focus_set()
+        def ok():
+            name = ent.get().strip()
+            if not name:
+                messagebox.showwarning("Name fehlt", "Bitte Profilnamen eingeben.")
+                return
+            if name in self.config_obj.profiles:
+                if not messagebox.askyesno("Überschreiben?", f"Profil '{name}' existiert bereits. Überschreiben?"):
+                    return
+            prof = self._profile_from_inputs()
+            upsert_profile(self.config_obj, name, prof)
+            self.cmb_profile["values"] = list(self.config_obj.profiles.keys())
+            self.cmb_profile.set(name)
+            try:
+                save_config(self._cfg_path, self.config_obj)
+                self.lbl_status.config(text=f"Profil '{name}' angelegt.")
+            except Exception as e:
+                self._show_error("Speichern fehlgeschlagen", str(e))
+            win.destroy()
+        def cancel():
+            win.destroy()
+        ttk.Button(win, text="OK", command=ok).grid(row=1, column=0, padx=8, pady=(0,8))
+        ttk.Button(win, text="Abbrechen", command=cancel).grid(row=1, column=1, padx=8, pady=(0,8))
+        win.grab_set()
 
     # --------------------------------------------------------------------- #
     # Close

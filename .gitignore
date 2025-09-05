@@ -7,6 +7,7 @@ __pycache__/
 *.so
 *.pyd
 *.dll
+config.json
 
 # Distribution / packaging
 .Python

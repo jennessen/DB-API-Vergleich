@@ -70,6 +70,11 @@ class TreePreview:
         pv = TreePreview(parent)
         pv.frame.pack(...)
         pv.show_dataframe(df)
+
+    Zusätzlich unterstützt:
+    - Spaltenfilter (UI in der Toolbar)
+    - Globaler Filter (über set_global_filter), durchsucht alle Spalten
+    - "Nur Fehler"-Ansicht, wenn Spalte 'validation_ok' vorhanden ist
     """
 
     def __init__(self, parent: tk.Misc, settings: Optional[PreviewSettings] = None) -> None:
@@ -84,6 +89,7 @@ class TreePreview:
         self._pages: int = 0
         self._filter_col: Optional[str] = None
         self._filter_text: str = ""
+        self._global_filter_text: str = ""
         self._only_errors: bool = False  # nutzt Spalte 'validation_ok' falls vorhanden
 
         # UI
@@ -165,6 +171,7 @@ class TreePreview:
 
         # Filter zurücksetzen
         self._filter_text = ""
+        self._global_filter_text = ""
         self._filter_col = None
         self.ent_filter.delete(0, tk.END)
 
@@ -201,6 +208,26 @@ class TreePreview:
                     dfv = dfv[mask]
                 except Exception:
                     pass
+
+        # Globaler Filter über alle Spalten
+        if self._global_filter_text:
+            gtxt = self._global_filter_text.lower()
+            try:
+                # baue eine Zeilenmaske, die true ist, wenn irgendeine Spalte den Text enthält
+                masks = []
+                for c in dfv.columns:
+                    try:
+                        masks.append(dfv[c].astype("string").str.lower().str.contains(gtxt, na=False))
+                    except Exception:
+                        # nicht-stringbare Spalten ignorieren
+                        continue
+                if masks:
+                    import functools
+                    import operator
+                    rowmask = functools.reduce(operator.or_, masks)
+                    dfv = dfv[rowmask]
+            except Exception:
+                pass
 
         self._df_view = dfv.reset_index(drop=True)
 
@@ -306,6 +333,7 @@ class TreePreview:
     def _reset_filter(self) -> None:
         self._filter_col = None
         self._filter_text = ""
+        self._global_filter_text = ""
         self.ent_filter.delete(0, tk.END)
         self.cmb_filter_col.set("")
         self._rebuild_view()
@@ -313,5 +341,14 @@ class TreePreview:
 
     def _toggle_only_errors(self) -> None:
         self._only_errors = bool(self.var_only_err.get())
+        self._rebuild_view()
+        self._load_page(0)
+
+    # ------------------------------------------------------------------ #
+    # Externer globaler Filter (für Header-Suchfeld)
+    # ------------------------------------------------------------------ #
+    def set_global_filter(self, text: str) -> None:
+        """Setzt einen globalen Filtertext, der alle Spalten durchsucht."""
+        self._global_filter_text = text or ""
         self._rebuild_view()
         self._load_page(0)

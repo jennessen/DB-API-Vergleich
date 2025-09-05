@@ -21,7 +21,7 @@ import pandas as pd
 
 # App-Module
 from logging_setup import setup_logging
-from config_loader import load_config, AppSettings, Profile
+from config_loader import load_config, save_config, upsert_profile, create_empty_profile, AppSettings, Profile
 from preview import TreePreview
 
 # Controller-Architektur
@@ -67,9 +67,9 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
 
         # Pfade (PyInstaller-kompatibel) + Config + Logging
         app_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-        cfg_path = os.path.join(app_dir, "config.json")
+        self._cfg_path = os.path.join(app_dir, "config.json")
 
-        self.config_obj: AppSettings = load_config(cfg_path)
+        self.config_obj: AppSettings = load_config(self._cfg_path)
         setup_logging(self.config_obj.logging_dir)
         log.info("UI loaded", extra={"app_version": self.config_obj.app_version})
 
@@ -113,10 +113,6 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         self.cmb_profile.pack(side="left")
         self.cmb_profile.bind("<<ComboboxSelected>>", lambda e: self._apply_profile_defaults())
 
-        # Suchfeld (optional: globaler Tabellenfilter – reine UI)
-        self.ent_search = ttk.Entry(right, width=26)
-        self.ent_search.insert(0, "Suchen…")
-        self.ent_search.pack(side="left", padx=(10, 8))
 
         # Aktionen
         self.btn_run = ttk.Button(right, text="▶ Ausführen", command=self.controller.run)
@@ -127,6 +123,12 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         self.btn_export.pack(side="left", padx=2)
         self.btn_reval = ttk.Button(right, text="♻︎ Erneut prüfen", command=self.controller.revalidate, state=tk.DISABLED)
         self.btn_reval.pack(side="left", padx=2)
+
+        # Config Aktionen
+        self.btn_save = ttk.Button(right, text="💾 Speichern", command=self._save_current_profile)
+        self.btn_save.pack(side="left", padx=(8, 2))
+        self.btn_new = ttk.Button(right, text="＋ Neues Profil", command=self._create_new_profile)
+        self.btn_new.pack(side="left", padx=2)
 
         # Theme toggle
         self.btn_theme = ttk.Button(right, text="🌙", command=self._toggle_theme)
@@ -245,6 +247,31 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         # Deine existierende Preview-Komponente
         self.preview = TreePreview(prev)
         self.preview.frame.grid(row=1, column=0, sticky="nsew")
+        
+        # Suchfeld in Vorschau neben Rows/Seite (nachdem Preview existiert)
+        self.ent_search = ttk.Entry(pbar, width=26)
+        self.ent_search.insert(0, "Suchen (alle Spalten)…")
+        self.ent_search.pack(side="left", padx=(10, 8))
+        def _on_search_focus_in(_evt=None):
+            if self.ent_search.get() == "Suchen (alle Spalten)…":
+                self.ent_search.delete(0, tk.END)
+        def _on_search_focus_out(_evt=None):
+            txt = self.ent_search.get().strip()
+            if not txt:
+                self.ent_search.delete(0, tk.END)
+                self.ent_search.insert(0, "Suchen (alle Spalten)…")
+        def _on_search_key(_evt=None):
+            txt = self.ent_search.get()
+            if txt == "Suchen (alle Spalten)…":
+                txt = ""
+            try:
+                if hasattr(self.preview, "set_global_filter"):
+                    self.preview.set_global_filter(txt)
+            except Exception:
+                pass
+        self.ent_search.bind("<FocusIn>", _on_search_focus_in)
+        self.ent_search.bind("<FocusOut>", _on_search_focus_out)
+        self.ent_search.bind("<KeyRelease>", _on_search_key)
 
         # Logs
         logs = self._card(parent, "Logs")
@@ -293,6 +320,84 @@ class SingleScreenApp(tk.Tk, UiPort, UiInputs):
         new = "darkly" if cur != "darkly" else "flatly"
         self.style.theme_use(new)
         self.btn_theme.config(text="☀" if new == "darkly" else "🌙")
+
+    # --------------------------- Config Save/Create --------------------------- #
+    def _profile_from_inputs(self) -> Profile:
+        prof = Profile()
+        # DB
+        prof.db.server = self.ent_server.get()
+        prof.db.database = self.ent_database.get()
+        prof.db.user = self.ent_user.get()
+        prof.db.password = self.ent_pwd.get()
+        prof.db.sql = self.txt_sql.get("1.0", tk.END).strip()
+        # API
+        prof.api.base_key = self.cmb_base.get()
+        prof.api.role = self.cmb_role.get()
+        prof.api.resource = self.ent_resource.get()
+        prof.api.alias = self.ent_alias.get()
+        prof.api.auth = self.ent_auth.get()
+        prof.api.use_updates = bool(self.var_updates.get())
+        prof.api.page_cap = self.get_profile_page_cap()
+        prof.api.timeout_s = self.get_profile_api_timeout()
+        prof.api.select = self.ent_select.get()
+        prof.api.expand = self.ent_expand.get()
+        prof.api.filter = self.ent_filter.get()
+        # JOIN
+        prof.join.db_key = self.ent_dbkey.get()
+        prof.join.api_key = self.ent_apikey.get()
+        prof.join.how = self.cmb_how.get() or "inner"
+        prof.join.db_prefix = self.ent_dbpref.get() or "db_"
+        prof.join.api_prefix = self.ent_apipref.get() or "api_"
+        prof.join.validator_script = self.ent_validator.get()
+        prof.join.validate_on_run = bool(self.var_validate.get())
+        # Sonstiges
+        prof.timezone = self.get_profile_timezone()
+        return prof
+
+    def _save_current_profile(self) -> None:
+        name = self.cmb_profile.get()
+        if not name:
+            messagebox.showwarning("Kein Profil", "Bitte zuerst ein Profil auswählen oder neu anlegen.")
+            return
+        prof = self._profile_from_inputs()
+        upsert_profile(self.config_obj, name, prof)
+        try:
+            save_config(self._cfg_path, self.config_obj)
+            self.set_status(f"Profil '{name}' gespeichert.")
+        except Exception as e:
+            self.show_error("Speichern fehlgeschlagen", str(e))
+
+    def _create_new_profile(self) -> None:
+        # Einfacher Dialog für Profilnamen
+        win = tk.Toplevel(self)
+        win.title("Neues Profil anlegen")
+        ttk.Label(win, text="Profilname:").grid(row=0, column=0, padx=8, pady=8)
+        ent = ttk.Entry(win, width=28); ent.grid(row=0, column=1, padx=8, pady=8)
+        ent.focus_set()
+        def ok():
+            name = ent.get().strip()
+            if not name:
+                messagebox.showwarning("Name fehlt", "Bitte Profilnamen eingeben.")
+                return
+            if name in self.config_obj.profiles:
+                if not messagebox.askyesno("Überschreiben?", f"Profil '{name}' existiert bereits. Überschreiben?"):
+                    return
+            prof = self._profile_from_inputs()
+            upsert_profile(self.config_obj, name, prof)
+            # UI aktualisieren
+            self.cmb_profile["values"] = list(self.config_obj.profiles.keys())
+            self.cmb_profile.set(name)
+            try:
+                save_config(self._cfg_path, self.config_obj)
+                self.set_status(f"Profil '{name}' angelegt.")
+            except Exception as e:
+                self.show_error("Speichern fehlgeschlagen", str(e))
+            win.destroy()
+        def cancel():
+            win.destroy()
+        ttk.Button(win, text="OK", command=ok).grid(row=1, column=0, padx=8, pady=(0,8))
+        ttk.Button(win, text="Abbrechen", command=cancel).grid(row=1, column=1, padx=8, pady=(0,8))
+        win.grab_set()
 
     # ------------------------------------------------------------------ #
     # UiPort (Controller → UI)

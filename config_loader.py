@@ -69,7 +69,7 @@ class AppSettings:
 
 
 # ============================================================================
-# Laden der Konfiguration (ohne Altlasten)
+# Laden/Speichern der Konfiguration
 # ============================================================================
 
 def load_config(path: str) -> AppSettings:
@@ -171,3 +171,61 @@ def load_config(path: str) -> AppSettings:
         profiles[name] = prof
 
     return AppSettings(api_urls=api_urls, profiles=profiles)
+
+
+def save_config(path: str, settings: AppSettings) -> None:
+    """Speichert die Konfiguration in die angegebene Datei.
+
+    Struktur identisch zu `load_config`-Eingabe. Passwörter/Token werden
+    im Klartext gespeichert – daher nur lokal verwenden. Wir schreiben
+    UTF-8 mit Einrückung für bessere Lesbarkeit.
+    """
+    data: dict = {"api_urls": dict(settings.api_urls)}
+    # Profile als Top-Level-Keys ablegen
+    for name, prof in settings.profiles.items():
+        data[name] = {
+            "timezone": prof.timezone,
+            "db": {
+                "server": prof.db.server,
+                "database": prof.db.database,
+                "user": prof.db.user,
+                "password": prof.db.password,
+                "sql": prof.db.sql,
+                "max_rows": prof.db.max_rows,
+            },
+            "api": {
+                "base_key": prof.api.base_key,
+                "role": prof.api.role,
+                "resource": prof.api.resource,
+                "alias": prof.api.alias,
+                "auth": prof.api.auth,
+                "use_updates": prof.api.use_updates,
+                "page_cap": prof.api.page_cap,
+                "timeout_s": prof.api.timeout_s,
+                "select": getattr(prof.api, "select", ""),
+                "expand": getattr(prof.api, "expand", ""),
+                "filter": getattr(prof.api, "filter", ""),
+            },
+            "join": {
+                "db_key": prof.join.db_key,
+                "api_key": prof.join.api_key,
+                "how": prof.join.how,
+                "db_prefix": prof.join.db_prefix,
+                "api_prefix": prof.join.api_prefix,
+                "validator_script": getattr(prof.join, "validator_script", ""),
+                "validate_on_run": getattr(prof.join, "validate_on_run", False),
+            },
+        }
+    # Datei schreiben
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def create_empty_profile(name: str) -> Profile:
+    """Erzeugt ein neues, leeres Profil mit sinnvollen Defaults."""
+    return Profile()
+
+
+def upsert_profile(settings: AppSettings, name: str, profile: Profile) -> None:
+    """Fügt ein Profil hinzu oder aktualisiert es im AppSettings-Objekt."""
+    settings.profiles[name] = profile
